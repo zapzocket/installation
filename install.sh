@@ -62,6 +62,232 @@ function show_logo() {
     echo ""
 }
 
+function verify_installation() {
+    echo -e "\n\033[1;36m========================================\033[0m"
+    echo -e "\033[1;36m   Installation Verification Report\033[0m"
+    echo -e "\033[1;36m========================================\033[0m\n"
+    
+    local errors=0
+    local warnings=0
+    
+    # Check Apache service
+    echo -e "\033[33m[1/10] Checking Apache service...\033[0m"
+    if systemctl is-active --quiet apache2; then
+        echo -e "\033[32m  ✅ Apache is running\033[0m"
+    else
+        echo -e "\033[31m  ❌ Apache is not running\033[0m"
+        ((errors++))
+    fi
+    
+    # Check MySQL service
+    echo -e "\n\033[33m[2/10] Checking MySQL service...\033[0m"
+    if check_marzban_installed; then
+        MYSQL_CONTAINER=$(docker ps -q --filter "name=mysql" --no-trunc)
+        if [ -n "$MYSQL_CONTAINER" ]; then
+            echo -e "\033[32m  ✅ MySQL container is running (Marzban mode)\033[0m"
+        else
+            echo -e "\033[31m  ❌ MySQL container not found\033[0m"
+            ((errors++))
+        fi
+    else
+        if systemctl is-active --quiet mysql; then
+            echo -e "\033[32m  ✅ MySQL is running\033[0m"
+        else
+            echo -e "\033[31m  ❌ MySQL is not running\033[0m"
+            ((errors++))
+        fi
+    fi
+    
+    # Check bot directory
+    echo -e "\n\033[33m[3/10] Checking bot directory...\033[0m"
+    if [ -d "/var/www/html/zapzocketconfig" ]; then
+        echo -e "\033[32m  ✅ Bot directory exists\033[0m"
+        file_count=$(find /var/www/html/zapzocketconfig -type f | wc -l)
+        echo -e "\033[36m     Files found: $file_count\033[0m"
+    else
+        echo -e "\033[31m  ❌ Bot directory not found\033[0m"
+        ((errors++))
+    fi
+    
+    # Check config file
+    echo -e "\n\033[33m[4/10] Checking configuration file...\033[0m"
+    CONFIG_PATH="/var/www/html/zapzocketconfig/config.php"
+    if [ -f "$CONFIG_PATH" ]; then
+        echo -e "\033[32m  ✅ Config file exists\033[0m"
+        
+        # Check file permissions
+        perms=$(stat -c "%a" "$CONFIG_PATH")
+        if [ "$perms" = "755" ] || [ "$perms" = "644" ]; then
+            echo -e "\033[32m  ✅ Config file permissions: $perms\033[0m"
+        else
+            echo -e "\033[33m  ⚠️  Config file permissions: $perms (expected 755 or 644)\033[0m"
+            ((warnings++))
+        fi
+        
+        # Verify config contents
+        if grep -q '$APIKEY' "$CONFIG_PATH" && grep -q '$dbname' "$CONFIG_PATH"; then
+            echo -e "\033[32m  ✅ Config file structure is valid\033[0m"
+        else
+            echo -e "\033[31m  ❌ Config file structure is invalid\033[0m"
+            ((errors++))
+        fi
+    else
+        echo -e "\033[31m  ❌ Config file not found\033[0m"
+        ((errors++))
+    fi
+    
+    # Check database connection
+    echo -e "\n\033[33m[5/10] Checking database connection...\033[0m"
+    if extract_db_credentials 2>/dev/null; then
+        if check_marzban_installed; then
+            MYSQL_CONTAINER=$(docker ps -q --filter "name=mysql" --no-trunc)
+            if docker exec "$MYSQL_CONTAINER" mysql -u "$DB_USER" -p"$DB_PASS" -e "USE $DB_NAME;" 2>/dev/null; then
+                echo -e "\033[32m  ✅ Database connection successful\033[0m"
+                echo -e "\033[36m     Database: $DB_NAME\033[0m"
+                echo -e "\033[36m     User: $DB_USER\033[0m"
+            else
+                echo -e "\033[31m  ❌ Database connection failed\033[0m"
+                ((errors++))
+            fi
+        else
+            if mysql -u "$DB_USER" -p"$DB_PASS" -e "USE $DB_NAME;" 2>/dev/null; then
+                echo -e "\033[32m  ✅ Database connection successful\033[0m"
+                echo -e "\033[36m     Database: $DB_NAME\033[0m"
+                echo -e "\033[36m     User: $DB_USER\033[0m"
+                
+                # Check table count
+                table_count=$(mysql -u "$DB_USER" -p"$DB_PASS" -D "$DB_NAME" -e "SHOW TABLES;" 2>/dev/null | wc -l)
+                if [ "$table_count" -gt 1 ]; then
+                    echo -e "\033[32m  ✅ Database tables: $((table_count - 1))\033[0m"
+                else
+                    echo -e "\033[33m  ⚠️  No tables found in database\033[0m"
+                    ((warnings++))
+                fi
+            else
+                echo -e "\033[31m  ❌ Database connection failed\033[0m"
+                ((errors++))
+            fi
+        fi
+    else
+        echo -e "\033[33m  ⚠️  Could not extract database credentials\033[0m"
+        ((warnings++))
+    fi
+    
+    # Check PHP extensions
+    echo -e "\n\033[33m[6/10] Checking PHP extensions...\033[0m"
+    required_extensions=("mysqli" "curl" "json" "mbstring" "zip")
+    missing_extensions=()
+    
+    for ext in "${required_extensions[@]}"; do
+        if php -m 2>/dev/null | grep -q "^$ext$"; then
+            echo -e "\033[32m  ✅ $ext\033[0m"
+        else
+            echo -e "\033[31m  ❌ $ext (missing)\033[0m"
+            missing_extensions+=("$ext")
+            ((errors++))
+        fi
+    done
+    
+    # Check SSL certificate
+    echo -e "\n\033[33m[7/10] Checking SSL certificate...\033[0m"
+    if [ -f "$CONFIG_PATH" ]; then
+        domain=$(grep '^\$domainhosts' "$CONFIG_PATH" | cut -d"'" -f2 | cut -d'/' -f1)
+        
+        if [ -n "$domain" ] && [ -f "/etc/letsencrypt/live/$domain/cert.pem" ]; then
+            expiry_date=$(openssl x509 -enddate -noout -in "/etc/letsencrypt/live/$domain/cert.pem" | cut -d= -f2)
+            current_date=$(date +%s)
+            expiry_timestamp=$(date -d "$expiry_date" +%s)
+            days_remaining=$(( ($expiry_timestamp - $current_date) / 86400 ))
+            
+            if [ $days_remaining -gt 30 ]; then
+                echo -e "\033[32m  ✅ SSL certificate valid for $days_remaining days\033[0m"
+                echo -e "\033[36m     Domain: $domain\033[0m"
+            elif [ $days_remaining -gt 0 ]; then
+                echo -e "\033[33m  ⚠️  SSL certificate expires in $days_remaining days\033[0m"
+                echo -e "\033[36m     Domain: $domain\033[0m"
+                ((warnings++))
+            else
+                echo -e "\033[31m  ❌ SSL certificate expired\033[0m"
+                ((errors++))
+            fi
+        else
+            echo -e "\033[33m  ⚠️  SSL certificate not found (domain: ${domain:-unknown})\033[0m"
+            ((warnings++))
+        fi
+    else
+        echo -e "\033[33m  ⚠️  Cannot check SSL (config not found)\033[0m"
+        ((warnings++))
+    fi
+    
+    # Check webhook
+    echo -e "\n\033[33m[8/10] Checking Telegram webhook...\033[0m"
+    if [ -f "$CONFIG_PATH" ]; then
+        BOT_TOKEN=$(grep '^\$APIKEY' "$CONFIG_PATH" | awk -F"'" '{print $2}')
+        
+        if [ -n "$BOT_TOKEN" ]; then
+            webhook_info=$(curl -s "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo")
+            webhook_url=$(echo "$webhook_info" | grep -o '"url":"[^"]*"' | cut -d'"' -f4)
+            
+            if [ -n "$webhook_url" ]; then
+                echo -e "\033[32m  ✅ Webhook is configured\033[0m"
+                echo -e "\033[36m     URL: $webhook_url\033[0m"
+            else
+                echo -e "\033[31m  ❌ Webhook not configured\033[0m"
+                ((errors++))
+            fi
+        else
+            echo -e "\033[33m  ⚠️  Bot token not found in config\033[0m"
+            ((warnings++))
+        fi
+    else
+        echo -e "\033[33m  ⚠️  Cannot check webhook (config not found)\033[0m"
+        ((warnings++))
+    fi
+    
+    # Check file ownership
+    echo -e "\n\033[33m[9/10] Checking file ownership...\033[0m"
+    if [ -d "/var/www/html/zapzocketconfig" ]; then
+        owner=$(stat -c "%U:%G" "/var/www/html/zapzocketconfig")
+        if [ "$owner" = "www-data:www-data" ]; then
+            echo -e "\033[32m  ✅ Correct ownership: $owner\033[0m"
+        else
+            echo -e "\033[33m  ⚠️  Ownership: $owner (expected www-data:www-data)\033[0m"
+            ((warnings++))
+        fi
+    fi
+    
+    # Check disk space
+    echo -e "\n\033[33m[10/10] Checking disk space...\033[0m"
+    disk_usage=$(df -h / | awk 'NR==2 {print $5}' | sed 's/%//')
+    if [ "$disk_usage" -lt 80 ]; then
+        echo -e "\033[32m  ✅ Disk usage: ${disk_usage}%\033[0m"
+    elif [ "$disk_usage" -lt 90 ]; then
+        echo -e "\033[33m  ⚠️  Disk usage: ${disk_usage}% (getting high)\033[0m"
+        ((warnings++))
+    else
+        echo -e "\033[31m  ❌ Disk usage: ${disk_usage}% (critically high)\033[0m"
+        ((errors++))
+    fi
+    
+    # Summary
+    echo -e "\n\033[1;36m========================================\033[0m"
+    echo -e "\033[1;36m           Verification Summary\033[0m"
+    echo -e "\033[1;36m========================================\033[0m"
+    
+    if [ $errors -eq 0 ] && [ $warnings -eq 0 ]; then
+        echo -e "\n\033[1;32m✅ Perfect! All checks passed successfully.\033[0m"
+        echo -e "\033[32mYour ZapSocket Bot installation is fully operational.\033[0m\n"
+    elif [ $errors -eq 0 ]; then
+        echo -e "\n\033[1;33m⚠️  Installation completed with $warnings warning(s).\033[0m"
+        echo -e "\033[33mYour bot should work, but consider addressing the warnings.\033[0m\n"
+    else
+        echo -e "\n\033[1;31m❌ Installation has $errors error(s) and $warnings warning(s).\033[0m"
+        echo -e "\033[31mPlease fix the errors before using the bot.\033[0m\n"
+    fi
+    
+    read -p "Press Enter to continue..."
+}
+
 # Display Menu
 function show_menu() {
     show_logo
@@ -74,9 +300,10 @@ function show_menu() {
     echo -e "\033[1;36m7)\033[0m Renew SSL Certificates"
     echo -e "\033[1;36m8)\033[0m Change Domain"
     echo -e "\033[1;36m9)\033[0m Additional Bot Management"
-    echo -e "\033[1;36m10)\033[0m Exit"
+    echo -e "\033[1;36m10)\033[0m Verify Installation" # Added verification option to menu
+    echo -e "\033[1;36m11)\033[0m Exit" # Updated exit number
     echo ""
-    read -p "Select an option [1-10]: " option
+    read -p "Select an option [1-11]: " option
     case $option in
         1) install_bot ;;
         2) update_bot ;;
@@ -87,7 +314,8 @@ function show_menu() {
         7) renew_ssl ;;
         8) change_domain ;;
         9) manage_additional_bots ;;
-        10)
+        10) verify_installation ;; # Added verification call
+        11)
             echo -e "\033[32mExiting...\033[0m"
             exit 0
             ;;
@@ -515,6 +743,37 @@ EOF
             echo -e "\n\e[36mPlease enter your bot username (without @):\033[0m"
             read YOUR_BOTNAME
 
+            echo -e "\n\e[33mInstalling SSL certificate for ${YOUR_DOMAIN}...\033[0m"
+            
+            # Install certbot if not already installed
+            if ! command -v certbot &>/dev/null; then
+                echo -e "\e[33mInstalling Certbot...\033[0m"
+                sudo apt-get install -y certbot python3-certbot-apache || {
+                    echo -e "\e[91mError: Failed to install Certbot.\033[0m"
+                    exit 1
+                }
+            fi
+            
+            # Stop Apache temporarily for SSL setup
+            sudo systemctl stop apache2
+            
+            # Get SSL certificate
+            echo -e "\e[33mObtaining SSL certificate...\033[0m"
+            if sudo certbot --apache --redirect --agree-tos --non-interactive --preferred-challenges http -d "$YOUR_DOMAIN"; then
+                echo -e "\e[92mSSL certificate installed successfully!\033[0m"
+                SSL_INSTALLED=true
+            else
+                echo -e "\e[93mWarning: SSL certificate installation failed. Continuing with HTTP...\033[0m"
+                echo -e "\e[93mYou can install SSL later using option 7 from the menu.\033[0m"
+                SSL_INSTALLED=false
+            fi
+            
+            # Start Apache
+            sudo systemctl start apache2 || {
+                echo -e "\e[91mError: Failed to start Apache2.\033[0m"
+                exit 1
+            }
+
             ASAS="$"
 
             wait
@@ -570,12 +829,19 @@ EOF
 
             sleep 1
 
-            curl -F "url=https://${YOUR_DOMAIN}/zapzocketconfig/index.php" \
-     -F "secret_token=${secrettoken}" \
-     "https://api.telegram.org/bot${YOUR_BOT_TOKEN}/setWebhook" || {
+            if [ "$SSL_INSTALLED" = true ]; then
+                WEBHOOK_URL="https://${YOUR_DOMAIN}/zapzocketconfig/index.php"
+            else
+                WEBHOOK_URL="http://${YOUR_DOMAIN}/zapzocketconfig/index.php"
+            fi
+            
+            curl -F "url=${WEBHOOK_URL}" \
+                 -F "secret_token=${secrettoken}" \
+                 "https://api.telegram.org/bot${YOUR_BOT_TOKEN}/setWebhook" || {
                 echo -e "\e[91mError: Failed to set webhook for bot.\033[0m"
                 exit 1
             }
+            
             MESSAGE="✅ The bot is installed! for start the bot send /start command."
             curl -s -X POST "https://api.telegram.org/bot${YOUR_BOT_TOKEN}/sendMessage" -d chat_id="${YOUR_CHAT_ID}" -d text="$MESSAGE" || {
                 echo -e "\e[91mError: Failed to send message to Telegram.\033[0m"
@@ -588,17 +854,27 @@ EOF
                 exit 1
             }
             
-            url="https://${YOUR_DOMAIN}/zapzocketconfig/table.php"
-            curl $url || {
-                echo -e "\e[91mError: Failed to fetch URL from domain.\033[0m"
-                exit 1
-            }
+            echo -e "\n\e[33mSetting up database tables...\033[0m"
+            
+            if [ "$SSL_INSTALLED" = true ]; then
+                table_url="https://${YOUR_DOMAIN}/zapzocketconfig/table.php"
+            else
+                table_url="http://${YOUR_DOMAIN}/zapzocketconfig/table.php"
+            fi
+            
+            if curl -f -s -o /dev/null "$table_url"; then
+                echo -e "\e[92mDatabase tables created successfully!\033[0m"
+            else
+                echo -e "\e[93mWarning: Could not automatically create database tables.\033[0m"
+                echo -e "\e[93mPlease visit ${table_url} in your browser to complete setup.\033[0m"
+                echo -e "\e[93mThis may happen if your domain DNS is not yet propagated.\033[0m"
+            fi
 
             clear
 
             echo " "
 
-            echo -e "\e[102mDomain Bot: https://${YOUR_DOMAIN}\033[0m"
+            echo -e "\e[102mDomain Bot: ${table_url%table.php}\033[0m"
             echo -e "\e[104mDatabase address: https://${YOUR_DOMAIN}/phpmyadmin\033[0m"
             echo -e "\e[33mDatabase name: \e[36m${dbname}\033[0m"
             echo -e "\e[33mDatabase username: \e[36m${dbuser}\033[0m"
@@ -615,6 +891,10 @@ EOF
 
     echo -e "\n\e[92mZapSocket Bot installation completed successfully!\033[0m"
     echo -e "\e[36mYou can now configure your bot through the web interface.\033[0m"
+    
+    echo -e "\n\033[33mRunning installation verification...\033[0m"
+    sleep 2
+    verify_installation
 }
 
 # Update Function
@@ -1060,7 +1340,7 @@ function change_domain() {
     fi
 
     echo -e "\033[33mConfiguring SSL for new domain...\033[0m"
-    if ! sudo certbot --apache --redirect --agree-tos --preferred-challenges http -d "$new_domain"; then
+    if ! sudo certbot --apache --redirect --agree-tos --non-interactive --preferred-challenges http -d "$new_domain"; then
         echo -e "\033[31m[ERROR] SSL configuration failed!\033[0m"
         echo -e "\033[33mCleaning up...\033[0m"
         sudo certbot delete --cert-name "$new_domain" 2>/dev/null
