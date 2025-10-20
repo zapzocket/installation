@@ -865,19 +865,42 @@ EOF
 
             clear
 
-            echo -e "\n\e[36mPlease enter your bot token:\033[0m"
-            read YOUR_BOT_TOKEN
+            echo -e "\n\033[1;36m========================================\033[0m"
+            echo -e "\033[1;36m     ZapSocket Bot Configuration\033[0m"
+            echo -e "\033[1;36m========================================\033[0m\n"
 
-            echo -e "\n\e[36mPlease enter your domain (e.g., example.com):\033[0m"
-            read YOUR_DOMAIN
+            echo -e "\033[1;33m[Step 1 of 4]\033[0m \033[36mBot Token Configuration\033[0m"
+            echo -e "\033[90m────────────────────────────────────────\033[0m"
+            echo -e "\033[37mEnter your Telegram bot token from @BotFather:\033[0m"
+            read -p "→ " YOUR_BOT_TOKEN
+            echo -e "\033[32m✓ Bot token saved\033[0m\n"
 
-            echo -e "\n\e[36mPlease enter your Telegram chat ID:\033[0m"
-            read YOUR_CHAT_ID
+            echo -e "\033[1;33m[Step 2 of 4]\033[0m \033[36mDomain Configuration\033[0m"
+            echo -e "\033[90m────────────────────────────────────────\033[0m"
+            echo -e "\033[37mEnter your domain (e.g., example.com):\033[0m"
+            read -p "→ " YOUR_DOMAIN
+            echo -e "\033[32m✓ Domain saved: ${YOUR_DOMAIN}\033[0m\n"
 
-            echo -e "\n\e[36mPlease enter your bot username (without @):\033[0m"
-            read YOUR_BOTNAME
+            echo -e "\033[1;33m[Step 3 of 4]\033[0m \033[36mAdmin Configuration\033[0m"
+            echo -e "\033[90m────────────────────────────────────────\033[0m"
+            echo -e "\033[37mEnter your Telegram chat ID (admin):\033[0m"
+            read -p "→ " YOUR_CHAT_ID
+            echo -e "\033[32m✓ Chat ID saved\033[0m\n"
 
-            echo -e "\n\e[33mInstalling SSL certificate for ${YOUR_DOMAIN}...\033[0m"
+            echo -e "\033[1;33m[Step 4 of 4]\033[0m \033[36mBot Username Configuration\033[0m"
+            echo -e "\033[90m────────────────────────────────────────\033[0m"
+            echo -e "\033[37mEnter your bot username (without @):\033[0m"
+            read -p "→ " YOUR_BOTNAME
+            echo -e "\033[32m✓ Bot username saved: @${YOUR_BOTNAME}\033[0m\n"
+
+            echo -e "\033[1;36m========================================\033[0m"
+            echo -e "\033[1;32m  Configuration Complete!\033[0m"
+            echo -e "\033[1;36m========================================\033[0m\n"
+            
+            echo -e "\033[33mProceeding with SSL installation...\033[0m\n"
+
+            
+            echo -e "\033[33mInstalling SSL certificate for ${YOUR_DOMAIN}...\033[0m"
             
             # Install certbot if not already installed
             if ! command -v certbot &>/dev/null; then
@@ -1048,6 +1071,8 @@ EOF
             echo -e "\e[33mDatabase password: \e[36m${dbpass}\033[0m"
             echo " "
             echo -e "\e[33mWebhook URL: \e[36m${WEBHOOK_URL}\033[0m"
+            echo " "
+            echo -e "\e[33mSecret Token: \e[36m${secrettoken}\033[0m"
             echo " "
             echo -e "ZapSocket Bot PRO"
             
