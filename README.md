@@ -1,33 +1,30 @@
-## 🎉 پروژه نسخه پرو، اوپن‌سورس شد!
-نسخه‌ی **Pro** این پروژه اکنون به‌صورت **اوپن‌سورس** در دسترس است.  
-از مشارکت، پیشنهادها و همکاری شما برای توسعه‌ی بهتر پروژه استقبال می‌کنیم 🤝
+# Install Mirza Bot
 
----
+*Automatically synced with your [v0.app](https://v0.app) deployments*
 
-### 💖 حمایت از پروژه
-اگر این پروژه برای شما مفید بوده،  
-می‌توانید از طریق لینک زیر کمک کنید:
+[![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?style=for-the-badge&logo=vercel)](https://vercel.com/drmohammadsniper-2199s-projects/v0-install-mirza-bot)
+[![Built with v0](https://img.shields.io/badge/Built%20with-v0.app-black?style=for-the-badge)](https://v0.app/chat/projects/KBubqjYxh94)
 
-👉 [حمایت از پروژه در NowPayments](https://nowpayments.io/donation/permiumbotmirza)
+## Overview
 
----
+This repository will stay in sync with your deployed chats on [v0.app](https://v0.app).
+Any changes you make to your deployed app will be automatically pushed to this repository from [v0.app](https://v0.app).
 
-⭐ لطفاً پروژه را **Star** کنید تا دیگران هم آن را پیدا کنند!
+## Deployment
 
----
+Your project is live at:
 
-## 🎉 The Pro Version of the Project is Now Open Source!
-The **Pro** version of this project is now officially **open-sourced**!  
-We welcome your contributions, suggestions, and collaboration to help it grow 🤝
+**[https://vercel.com/drmohammadsniper-2199s-projects/v0-install-mirza-bot](https://vercel.com/drmohammadsniper-2199s-projects/v0-install-mirza-bot)**
 
----
+## Build your app
 
-### 💖 Support the Project
-If you find this project useful,  
-you can support it through the link below:
+Continue building your app on:
 
-👉 [Support the Project on NowPayments](https://nowpayments.io/donation/permiumbotmirza)
+**[https://v0.app/chat/projects/KBubqjYxh94](https://v0.app/chat/projects/KBubqjYxh94)**
 
----
+## How It Works
 
-⭐ Don’t forget to **Star** the repository to help others discover it!
+1. Create and modify your project using [v0.app](https://v0.app)
+2. Deploy your chats from the v0 interface
+3. Changes are automatically pushed to this repository
+4. Vercel deploys the latest version from this repository
