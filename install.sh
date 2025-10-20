@@ -288,6 +288,138 @@ function verify_installation() {
     read -p "Press Enter to continue..."
 }
 
+function view_logs() {
+    while true; do
+        clear
+        echo -e "\n\033[1;36m========================================\033[0m"
+        echo -e "\033[1;36m           Log Viewer Menu\033[0m"
+        echo -e "\033[1;36m========================================\033[0m\n"
+        
+        echo -e "\033[1;36m1)\033[0m View Apache Error Log (Last 50 lines)"
+        echo -e "\033[1;36m2)\033[0m View Apache Access Log (Last 50 lines)"
+        echo -e "\033[1;36m3)\033[0m View PHP Error Log (Last 50 lines)"
+        echo -e "\033[1;36m4)\033[0m View MySQL Error Log (Last 50 lines)"
+        echo -e "\033[1;36m5)\033[0m Monitor Apache Error Log (Real-time)"
+        echo -e "\033[1;36m6)\033[0m Monitor Apache Access Log (Real-time)"
+        echo -e "\033[1;36m7)\033[0m Search Logs for Specific Text"
+        echo -e "\033[1;36m8)\033[0m Clear Apache Error Log"
+        echo -e "\033[1;36m9)\033[0m Back to Main Menu"
+        echo ""
+        read -p "Select an option [1-9]: " log_option
+        
+        case $log_option in
+            1)
+                echo -e "\n\033[33m=== Apache Error Log (Last 50 lines) ===\033[0m\n"
+                if [ -f "/var/log/apache2/error.log" ]; then
+                    tail -50 /var/log/apache2/error.log
+                else
+                    echo -e "\033[31mError log not found at /var/log/apache2/error.log\033[0m"
+                fi
+                echo -e "\n\033[36mPress Enter to continue...\033[0m"
+                read
+                ;;
+            2)
+                echo -e "\n\033[33m=== Apache Access Log (Last 50 lines) ===\033[0m\n"
+                if [ -f "/var/log/apache2/access.log" ]; then
+                    tail -50 /var/log/apache2/access.log
+                else
+                    echo -e "\033[31mAccess log not found at /var/log/apache2/access.log\033[0m"
+                fi
+                echo -e "\n\033[36mPress Enter to continue...\033[0m"
+                read
+                ;;
+            3)
+                echo -e "\n\033[33m=== PHP Error Log (Last 50 lines) ===\033[0m\n"
+                PHP_LOG=$(php -i 2>/dev/null | grep "error_log" | grep -v "no value" | head -1 | awk '{print $NF}')
+                if [ -n "$PHP_LOG" ] && [ -f "$PHP_LOG" ]; then
+                    tail -50 "$PHP_LOG"
+                elif [ -f "/var/log/php8.2-fpm.log" ]; then
+                    tail -50 /var/log/php8.2-fpm.log
+                else
+                    echo -e "\033[33mPHP error log not found. Checking Apache error log for PHP errors...\033[0m\n"
+                    grep -i "php" /var/log/apache2/error.log | tail -50
+                fi
+                echo -e "\n\033[36mPress Enter to continue...\033[0m"
+                read
+                ;;
+            4)
+                echo -e "\n\033[33m=== MySQL Error Log (Last 50 lines) ===\033[0m\n"
+                if check_marzban_installed; then
+                    MYSQL_CONTAINER=$(docker ps -q --filter "name=mysql" --no-trunc)
+                    if [ -n "$MYSQL_CONTAINER" ]; then
+                        docker logs --tail 50 "$MYSQL_CONTAINER" 2>&1
+                    else
+                        echo -e "\033[31mMySQL container not found\033[0m"
+                    fi
+                else
+                    if [ -f "/var/log/mysql/error.log" ]; then
+                        tail -50 /var/log/mysql/error.log
+                    else
+                        echo -e "\033[31mMySQL error log not found at /var/log/mysql/error.log\033[0m"
+                    fi
+                fi
+                echo -e "\n\033[36mPress Enter to continue...\033[0m"
+                read
+                ;;
+            5)
+                echo -e "\n\033[33m=== Monitoring Apache Error Log (Press Ctrl+C to stop) ===\033[0m\n"
+                if [ -f "/var/log/apache2/error.log" ]; then
+                    tail -f /var/log/apache2/error.log
+                else
+                    echo -e "\033[31mError log not found\033[0m"
+                    sleep 2
+                fi
+                ;;
+            6)
+                echo -e "\n\033[33m=== Monitoring Apache Access Log (Press Ctrl+C to stop) ===\033[0m\n"
+                if [ -f "/var/log/apache2/access.log" ]; then
+                    tail -f /var/log/apache2/access.log
+                else
+                    echo -e "\033[31mAccess log not found\033[0m"
+                    sleep 2
+                fi
+                ;;
+            7)
+                echo -e "\n\033[36mEnter text to search for in logs:\033[0m"
+                read search_text
+                if [ -n "$search_text" ]; then
+                    echo -e "\n\033[33m=== Search Results ===\033[0m\n"
+                    echo -e "\033[36m--- Apache Error Log ---\033[0m"
+                    grep -i "$search_text" /var/log/apache2/error.log 2>/dev/null | tail -20 || echo "No matches found"
+                    echo -e "\n\033[36m--- Apache Access Log ---\033[0m"
+                    grep -i "$search_text" /var/log/apache2/access.log 2>/dev/null | tail -20 || echo "No matches found"
+                else
+                    echo -e "\033[31mNo search text provided\033[0m"
+                fi
+                echo -e "\n\033[36mPress Enter to continue...\033[0m"
+                read
+                ;;
+            8)
+                echo -e "\n\033[33mAre you sure you want to clear the Apache error log? (y/n):\033[0m"
+                read confirm
+                if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
+                    if [ -f "/var/log/apache2/error.log" ]; then
+                        > /var/log/apache2/error.log
+                        echo -e "\033[32mApache error log cleared successfully\033[0m"
+                    else
+                        echo -e "\033[31mError log not found\033[0m"
+                    fi
+                else
+                    echo -e "\033[33mOperation cancelled\033[0m"
+                fi
+                sleep 2
+                ;;
+            9)
+                return
+                ;;
+            *)
+                echo -e "\033[31mInvalid option. Please try again.\033[0m"
+                sleep 2
+                ;;
+        esac
+    done
+}
+
 # Display Menu
 function show_menu() {
     show_logo
@@ -300,10 +432,11 @@ function show_menu() {
     echo -e "\033[1;36m7)\033[0m Renew SSL Certificates"
     echo -e "\033[1;36m8)\033[0m Change Domain"
     echo -e "\033[1;36m9)\033[0m Additional Bot Management"
-    echo -e "\033[1;36m10)\033[0m Verify Installation" # Added verification option to menu
-    echo -e "\033[1;36m11)\033[0m Exit" # Updated exit number
+    echo -e "\033[1;36m10)\033[0m Verify Installation"
+    echo -e "\033[1;36m11)\033[0m View Logs" # Added log viewer option
+    echo -e "\033[1;36m12)\033[0m Exit" # Updated exit number
     echo ""
-    read -p "Select an option [1-11]: " option
+    read -p "Select an option [1-12]: " option # Updated range
     case $option in
         1) install_bot ;;
         2) update_bot ;;
@@ -314,8 +447,9 @@ function show_menu() {
         7) renew_ssl ;;
         8) change_domain ;;
         9) manage_additional_bots ;;
-        10) verify_installation ;; # Added verification call
-        11)
+        10) verify_installation ;;
+        11) view_logs ;; # Added log viewer call
+        12) # Updated exit option number
             echo -e "\033[32mExiting...\033[0m"
             exit 0
             ;;
@@ -767,7 +901,6 @@ EOF
                 SSL_INSTALLED=false
             fi
             
-            # Start Apache
             sudo systemctl start apache2 || {
                 echo -e "\e[91mError: Failed to start Apache2.\033[0m"
                 exit 1
@@ -1363,65 +1496,200 @@ function renew_ssl() {
 }
 
 function change_domain() {
+    echo -e "\n\033[1;36m========================================\033[0m"
+    echo -e "\033[1;36m         Domain Change Process\033[0m"
+    echo -e "\033[1;36m========================================\033[0m\n"
+    
+    CONFIG_FILE="/var/www/html/zapzocketconfig/config.php"
+    
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo -e "\033[31m[ERROR] Config file not found!\033[0m"
+        return 1
+    fi
+    
+    OLD_DOMAIN=$(grep '^\$domainhosts' "$CONFIG_FILE" | cut -d"'" -f2 | cut -d'/' -f1)
+    
+    if [ -z "$OLD_DOMAIN" ]; then
+        echo -e "\033[31m[ERROR] Could not extract current domain from config!\033[0m"
+        return 1
+    fi
+    
+    echo -e "\033[33mCurrent domain: \033[36m${OLD_DOMAIN}\033[0m"
+    echo ""
+    
     local new_domain
-    while [[ ! "$new_domain" =~ ^[a-zA-Z0-9.-]+$ ]]; do
-        read -p "Enter new domain: " new_domain
-        [[ ! "$new_domain" =~ ^[a-zA-Z0-9.-]+$ ]] && echo -e "\033[31mInvalid domain format\033[0m"
+    while true; do
+        read -p "Enter new domain (e.g., example.com): " new_domain
+        
+        if [[ -z "$new_domain" ]]; then
+            echo -e "\033[31mDomain cannot be empty!\033[0m"
+            continue
+        fi
+        
+        if [[ ! "$new_domain" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+            echo -e "\033[31mInvalid domain format! Please enter a valid domain.\033[0m"
+            continue
+        fi
+        
+        if [ "$new_domain" = "$OLD_DOMAIN" ]; then
+            echo -e "\033[31mNew domain is the same as current domain!\033[0m"
+            continue
+        fi
+        
+        break
     done
-
-    echo -e "\033[33mStopping Apache to configure SSL...\033[0m"
+    
+    echo -e "\n\033[33mChanging domain from \033[36m${OLD_DOMAIN}\033[33m to \033[36m${new_domain}\033[0m"
+    echo -e "\033[33mThis process will:\033[0m"
+    echo -e "  1. Backup current configuration"
+    echo -e "  2. Obtain SSL certificate for new domain"
+    echo -e "  3. Update all configuration files"
+    echo -e "  4. Update Telegram webhook"
+    echo -e "  5. Clean up old SSL certificates"
+    echo ""
+    
+    read -p "Do you want to continue? (y/n): " confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        echo -e "\033[33mDomain change cancelled.\033[0m"
+        return 0
+    fi
+    
+    echo -e "\n\033[33m[1/6] Creating backup...\033[0m"
+    BACKUP_DIR="/root/zapzocket_backup_$(date +%Y%m%d_%H%M%S)"
+    mkdir -p "$BACKUP_DIR"
+    cp "$CONFIG_FILE" "$BACKUP_DIR/config.php.bak"
+    echo -e "\033[32m✅ Backup created at: ${BACKUP_DIR}\033[0m"
+    
+    echo -e "\n\033[33m[2/6] Stopping Apache...\033[0m"
     if ! sudo systemctl stop apache2; then
         echo -e "\033[31m[ERROR] Failed to stop Apache!\033[0m"
         return 1
     fi
-
-    echo -e "\033[33mConfiguring SSL for new domain...\033[0m"
-    if ! sudo certbot --apache --redirect --agree-tos --non-interactive --preferred-challenges http -d "$new_domain"; then
-        echo -e "\033[31m[ERROR] SSL configuration failed!\033[0m"
-        echo -e "\033[33mCleaning up...\033[0m"
-        sudo certbot delete --cert-name "$new_domain" 2>/dev/null
-        echo -e "\033[33mRestarting Apache after cleanup...\033[0m"
-        sudo systemctl start apache2 || echo -e "\033[31m[ERROR] Failed to restart Apache!\033[0m"
-        return 1
-    fi
-
-    echo -e "\033[33mRestarting Apache after SSL configuration...\033[0m"
-    if ! sudo systemctl start apache2; then
-        echo -e "\033[31m[ERROR] Failed to restart Apache!\033[0m"
-        return 1
-    fi
-
-    CONFIG_FILE="/var/www/html/zapzocketconfig/config.php"
-    if [ -f "$CONFIG_FILE" ]; then
-        sudo cp "$CONFIG_FILE" "$CONFIG_FILE.$(date +%s).bak"
-
-        sudo sed -i "s|\$domainhosts = '.*\/zapzocketconfig';|\$domainhosts = '${new_domain}\/zapzocketconfig';|" "$CONFIG_FILE"
-
-        NEW_SECRET=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9')
-        sudo sed -i "s|\$secrettoken = '.*';|\$secrettoken = '${NEW_SECRET}';|" "$CONFIG_FILE"
-
-        BOT_TOKEN=$(awk -F"'" '/\$APIKEY/{print $2}' "$CONFIG_FILE")
-        curl -s -o /dev/null -F "url=https://${new_domain}/zapzocketconfig/index.php" \
-             -F "secret_token=${NEW_SECRET}" \
-             "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" || {
-            echo -e "\033[33m[WARNING] Webhook update failed\033[0m"
+    echo -e "\033[32m✅ Apache stopped\033[0m"
+    
+    if ! command -v certbot &>/dev/null; then
+        echo -e "\033[33mInstalling Certbot...\033[0m"
+        sudo apt-get install -y certbot python3-certbot-apache || {
+            echo -e "\033[31m[ERROR] Failed to install Certbot!\033[0m"
+            sudo systemctl start apache2
+            return 1
         }
+    fi
+    
+    echo -e "\n\033[33m[3/6] Obtaining SSL certificate for ${new_domain}...\033[0m"
+    if sudo certbot --apache --redirect --agree-tos --non-interactive --preferred-challenges http -d "$new_domain"; then
+        echo -e "\033[32m✅ SSL certificate obtained successfully!\033[0m"
+        SSL_SUCCESS=true
     else
-        echo -e "\033[31m[CRITICAL] Config file missing!\033[0m"
+        echo -e "\033[31m[ERROR] SSL configuration failed!\033[0m"
+        echo -e "\033[33mPossible reasons:\033[0m"
+        echo -e "  - DNS not pointing to this server"
+        echo -e "  - Port 80/443 not accessible"
+        echo -e "  - Domain already has SSL certificate"
+        echo ""
+        read -p "Continue without SSL? (y/n): " continue_without_ssl
+        if [[ "$continue_without_ssl" != "y" && "$continue_without_ssl" != "Y" ]]; then
+            echo -e "\033[33mRestoring Apache...\033[0m"
+            sudo systemctl start apache2
+            return 1
+        fi
+        SSL_SUCCESS=false
+    fi
+    
+    echo -e "\n\033[33m[4/6] Starting Apache...\033[0m"
+    if ! sudo systemctl start apache2; then
+        echo -e "\033[31m[ERROR] Failed to start Apache!\033[0m"
         return 1
     fi
-
-    if curl -sI "https://${new_domain}" | grep -q "200 OK"; then
-        echo -e "\033[32mDomain successfully migrated to ${new_domain}\033[0m"
-        echo -e "\033[33mOld domain configuration has been automatically cleaned up\033[0m"
-    else
-        echo -e "\033[31m[WARNING] Final verification failed!\033[0m"
-        echo -e "\033[33mPlease check:\033[0m"
-        echo -e "1. DNS settings for ${new_domain}"
-        echo -e "2. Apache virtual host configuration"
-        echo -e "3. Firewall settings"
+    echo -e "\033[32m✅ Apache started\033[0m"
+    
+    echo -e "\n\033[33m[5/6] Updating configuration files...\033[0m"
+    
+    # Update domain in config.php
+    sudo sed -i "s|\$domainhosts = '.*';|\$domainhosts = '${new_domain}/zapzocketconfig';|" "$CONFIG_FILE"
+    
+    # Generate new secret token for security
+    NEW_SECRET=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9')
+    sudo sed -i "s|\$secrettoken = '.*';|\$secrettoken = '${NEW_SECRET}';|" "$CONFIG_FILE"
+    
+    echo -e "\033[32m✅ Configuration files updated\033[0m"
+    
+    echo -e "\n\033[33m[6/6] Updating Telegram webhook...\033[0m"
+    
+    BOT_TOKEN=$(awk -F"'" '/\$APIKEY/{print $2}' "$CONFIG_FILE")
+    
+    if [ -z "$BOT_TOKEN" ]; then
+        echo -e "\033[31m[ERROR] Could not extract bot token from config!\033[0m"
         return 1
     fi
+    
+    if [ "$SSL_SUCCESS" = true ]; then
+        WEBHOOK_URL="https://${new_domain}/zapzocketconfig/index.php"
+    else
+        WEBHOOK_URL="http://${new_domain}/zapzocketconfig/index.php"
+    fi
+    
+    WEBHOOK_RESPONSE=$(curl -s -F "url=${WEBHOOK_URL}" \
+         -F "secret_token=${NEW_SECRET}" \
+         "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook")
+    
+    if echo "$WEBHOOK_RESPONSE" | grep -q '"ok":true'; then
+        echo -e "\033[32m✅ Webhook updated successfully!\033[0m"
+        echo -e "\033[36m   New webhook: ${WEBHOOK_URL}\033[0m"
+    else
+        echo -e "\033[31m[WARNING] Webhook update may have failed!\033[0m"
+        echo -e "\033[33m   Response: ${WEBHOOK_RESPONSE}\033[0m"
+    fi
+    
+    if [ "$SSL_SUCCESS" = true ] && [ "$OLD_DOMAIN" != "$new_domain" ]; then
+        echo -e "\n\033[33mCleaning up old SSL certificates for ${OLD_DOMAIN}...\033[0m"
+        if sudo certbot delete --cert-name "$OLD_DOMAIN" --non-interactive 2>/dev/null; then
+            echo -e "\033[32m✅ Old SSL certificates removed\033[0m"
+        else
+            echo -e "\033[33m⚠️  No old SSL certificates found or already removed\033[0m"
+        fi
+    fi
+    
+    echo -e "\n\033[33mVerifying new domain...\033[0m"
+    sleep 2
+    
+    if curl -s -o /dev/null -w "%{http_code}" --max-time 10 "${WEBHOOK_URL}" | grep -q "200\|301\|302\|405"; then
+        echo -e "\033[32m✅ New domain is accessible!\033[0m"
+    else
+        echo -e "\033[33m⚠️  Could not verify domain accessibility\033[0m"
+        echo -e "\033[33m   This may be normal if DNS hasn't propagated yet\033[0m"
+    fi
+    
+    echo -e "\n\033[1;36m========================================\033[0m"
+    echo -e "\033[1;36m         Domain Change Summary\033[0m"
+    echo -e "\033[1;36m========================================\033[0m\n"
+    
+    echo -e "\033[32m✅ Domain successfully changed!\033[0m"
+    echo ""
+    echo -e "\033[33mOld Domain:\033[0m \033[36m${OLD_DOMAIN}\033[0m"
+    echo -e "\033[33mNew Domain:\033[0m \033[36m${new_domain}\033[0m"
+    echo ""
+    echo -e "\033[33mBot URL:\033[0m \033[36m${WEBHOOK_URL%index.php}\033[0m"
+    if [ "$SSL_SUCCESS" = true ]; then
+        echo -e "\033[33mPhpMyAdmin:\033[0m \033[36mhttps://${new_domain}/phpmyadmin\033[0m"
+        echo -e "\033[33mSSL Status:\033[0m \033[32m✅ Enabled\033[0m"
+    else
+        echo -e "\033[33mPhpMyAdmin:\033[0m \033[36mhttp://${new_domain}/phpmyadmin\033[0m"
+        echo -e "\033[33mSSL Status:\033[0m \033[33m⚠️  Not configured\033[0m"
+    fi
+    echo -e "\033[33mWebhook:\033[0m \033[36m${WEBHOOK_URL}\033[0m"
+    echo -e "\033[33mBackup Location:\033[0m \033[36m${BACKUP_DIR}\033[0m"
+    echo ""
+    
+    if [ "$SSL_SUCCESS" = false ]; then
+        echo -e "\033[33m⚠️  Note: SSL was not configured. You can configure it later using option 7 (Renew SSL).\033[0m"
+        echo ""
+    fi
+    
+    echo -e "\033[32mDomain change completed successfully!\033[0m"
+    echo ""
+    
+    read -p "Press Enter to continue..."
 }
 
 function manage_additional_bots() {
