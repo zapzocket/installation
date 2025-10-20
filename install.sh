@@ -760,11 +760,10 @@ EOF
             # Get SSL certificate
             echo -e "\e[33mObtaining SSL certificate...\033[0m"
             if sudo certbot --apache --redirect --agree-tos --non-interactive --preferred-challenges http -d "$YOUR_DOMAIN"; then
-                echo -e "\e[92mSSL certificate installed successfully!\033[0m"
+                echo -e "\e[92mSSL certificate obtained successfully!\033[0m"
                 SSL_INSTALLED=true
             else
-                echo -e "\e[93mWarning: SSL certificate installation failed. Continuing with HTTP...\033[0m"
-                echo -e "\e[93mYou can install SSL later using option 7 from the menu.\033[0m"
+                echo -e "\e[93mWarning: SSL certificate installation failed.\033[0m"
                 SSL_INSTALLED=false
             fi
             
@@ -773,6 +772,24 @@ EOF
                 echo -e "\e[91mError: Failed to start Apache2.\033[0m"
                 exit 1
             }
+            
+            if [ "$SSL_INSTALLED" = true ]; then
+                echo -e "\e[33mVerifying SSL certificate...\033[0m"
+                sleep 3  # Wait for Apache to fully start
+                
+                # Test if HTTPS actually works
+                if curl -s -o /dev/null -w "%{http_code}" --max-time 10 "https://${YOUR_DOMAIN}" | grep -q "200\|301\|302"; then
+                    echo -e "\e[92mSSL certificate is working correctly!\033[0m"
+                    SSL_WORKING=true
+                else
+                    echo -e "\e[93mWarning: SSL certificate exists but HTTPS connection failed.\033[0m"
+                    echo -e "\e[93mThis may be due to DNS not being propagated yet.\033[0m"
+                    echo -e "\e[93mFalling back to HTTP for webhook...\033[0m"
+                    SSL_WORKING=false
+                fi
+            else
+                SSL_WORKING=false
+            fi
 
             ASAS="$"
 
@@ -829,18 +846,29 @@ EOF
 
             sleep 1
 
-            if [ "$SSL_INSTALLED" = true ]; then
+            if [ "$SSL_WORKING" = true ]; then
                 WEBHOOK_URL="https://${YOUR_DOMAIN}/zapzocketconfig/index.php"
+                echo -e "\e[92mUsing HTTPS for webhook (SSL is working)\033[0m"
             else
                 WEBHOOK_URL="http://${YOUR_DOMAIN}/zapzocketconfig/index.php"
+                echo -e "\e[93mUsing HTTP for webhook (SSL not available or not working)\033[0m"
+                echo -e "\e[93mNote: You can install/fix SSL later using option 7 from the menu.\033[0m"
             fi
             
-            curl -F "url=${WEBHOOK_URL}" \
+            echo -e "\e[33mSetting webhook to: ${WEBHOOK_URL}\033[0m"
+            
+            WEBHOOK_RESPONSE=$(curl -s -F "url=${WEBHOOK_URL}" \
                  -F "secret_token=${secrettoken}" \
-                 "https://api.telegram.org/bot${YOUR_BOT_TOKEN}/setWebhook" || {
-                echo -e "\e[91mError: Failed to set webhook for bot.\033[0m"
-                exit 1
-            }
+                 "https://api.telegram.org/bot${YOUR_BOT_TOKEN}/setWebhook")
+            
+            echo "$WEBHOOK_RESPONSE"
+            
+            if echo "$WEBHOOK_RESPONSE" | grep -q '"ok":true'; then
+                echo -e "\e[92mWebhook set successfully!\033[0m"
+            else
+                echo -e "\e[91mWarning: Webhook setting may have failed. Response:\033[0m"
+                echo "$WEBHOOK_RESPONSE"
+            fi
             
             MESSAGE="✅ The bot is installed! for start the bot send /start command."
             curl -s -X POST "https://api.telegram.org/bot${YOUR_BOT_TOKEN}/sendMessage" -d chat_id="${YOUR_CHAT_ID}" -d text="$MESSAGE" || {
@@ -856,13 +884,15 @@ EOF
             
             echo -e "\n\e[33mSetting up database tables...\033[0m"
             
-            if [ "$SSL_INSTALLED" = true ]; then
+            if [ "$SSL_WORKING" = true ]; then
                 table_url="https://${YOUR_DOMAIN}/zapzocketconfig/table.php"
             else
                 table_url="http://${YOUR_DOMAIN}/zapzocketconfig/table.php"
             fi
             
-            if curl -f -s -o /dev/null "$table_url"; then
+            echo -e "\e[33mAttempting to create tables at: ${table_url}\033[0m"
+            
+            if curl -f -s -o /dev/null --max-time 15 "$table_url"; then
                 echo -e "\e[92mDatabase tables created successfully!\033[0m"
             else
                 echo -e "\e[93mWarning: Could not automatically create database tables.\033[0m"
@@ -875,10 +905,16 @@ EOF
             echo " "
 
             echo -e "\e[102mDomain Bot: ${table_url%table.php}\033[0m"
-            echo -e "\e[104mDatabase address: https://${YOUR_DOMAIN}/phpmyadmin\033[0m"
+            if [ "$SSL_WORKING" = true ]; then
+                echo -e "\e[104mDatabase address: https://${YOUR_DOMAIN}/phpmyadmin\033[0m"
+            else
+                echo -e "\e[104mDatabase address: http://${YOUR_DOMAIN}/phpmyadmin\033[0m"
+            fi
             echo -e "\e[33mDatabase name: \e[36m${dbname}\033[0m"
             echo -e "\e[33mDatabase username: \e[36m${dbuser}\033[0m"
             echo -e "\e[33mDatabase password: \e[36m${dbpass}\033[0m"
+            echo " "
+            echo -e "\e[33mWebhook URL: \e[36m${WEBHOOK_URL}\033[0m"
             echo " "
             echo -e "ZapSocket Bot PRO"
             
