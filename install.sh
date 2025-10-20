@@ -322,7 +322,7 @@ function install_bot() {
         exit 1
     }
     sudo systemctl start apache2 || {
-        echo -e "\e[91mError: Failed to start Apache2 service.\033[0m"
+        echo -e "\e[91mError: Failed to start Apache2 service after UFW update.\033[0m"
         exit 1
     }
 
@@ -1026,7 +1026,7 @@ function renew_ssl() {
 
     echo -e "\033[33mStopping Apache...\033[0m"
     sudo systemctl stop apache2 || {
-        echo -e "\033[31m[ERROR]\033[0m Failed to stop Apache. Exiting..."
+        echo -e "\033[31m[ERROR] Failed to stop Apache. Exiting...\033[0m"
         return 1
     }
 
