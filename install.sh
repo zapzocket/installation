@@ -6,9 +6,7 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-# Check SSL certificate status and days remaining
 check_ssl_status() {
-    # First get domain from config file
     if [ -f "/var/www/html/zapzocketconfig/config.php" ]; then
         domain=$(grep '^\$domainhosts' "/var/www/html/zapzocketconfig/config.php" | cut -d"'" -f2 | cut -d'/' -f1)
 
@@ -17,16 +15,26 @@ check_ssl_status() {
             current_date=$(date +%s)
             expiry_timestamp=$(date -d "$expiry_date" +%s)
             days_remaining=$(( ($expiry_timestamp - $current_date) / 86400 ))
-            if [ $days_remaining -gt 0 ]; then
+            
+            if [ $days_remaining -gt 30 ]; then
                 echo -e "\033[32m✅ SSL Certificate: $days_remaining days remaining (Domain: $domain)\033[0m"
+            elif [ $days_remaining -gt 0 ]; then
+                echo -e "\033[33m⚠️  SSL Certificate: $days_remaining days remaining (Domain: $domain) - Renewal recommended\033[0m"
             else
                 echo -e "\033[31m❌ SSL Certificate: Expired (Domain: $domain)\033[0m"
             fi
+            
+            # Check if HTTPS is actually working
+            if curl -s -o /dev/null -w "%{http_code}" --max-time 5 "https://${domain}" | grep -q "200\|301\|302"; then
+                echo -e "\033[32m   HTTPS connection: Working\033[0m"
+            else
+                echo -e "\033[33m   HTTPS connection: Not accessible\033[0m"
+            fi
         else
-            echo -e "\033[33m⚠️ SSL Certificate: Not found for domain $domain\033[0m"
+            echo -e "\033[33m⚠️  SSL Certificate: Not found for domain ${domain:-unknown}\033[0m"
         fi
     else
-        echo -e "\033[33m⚠️ Cannot check SSL: Config file not found\033[0m"
+        echo -e "\033[33m⚠️  Cannot check SSL: Config file not found\033[0m"
     fi
 }
 
@@ -69,6 +77,8 @@ function verify_installation() {
     
     local errors=0
     local warnings=0
+    local ssl_issue=false
+    local webhook_https=false
     
     # Check Apache service
     echo -e "\033[33m[1/10] Checking Apache service...\033[0m"
@@ -209,10 +219,12 @@ function verify_installation() {
             else
                 echo -e "\033[31m  ❌ SSL certificate expired\033[0m"
                 ((errors++))
+                ssl_issue=true
             fi
         else
             echo -e "\033[33m  ⚠️  SSL certificate not found (domain: ${domain:-unknown})\033[0m"
             ((warnings++))
+            ssl_issue=true
         fi
     else
         echo -e "\033[33m  ⚠️  Cannot check SSL (config not found)\033[0m"
@@ -231,6 +243,13 @@ function verify_installation() {
             if [ -n "$webhook_url" ]; then
                 echo -e "\033[32m  ✅ Webhook is configured\033[0m"
                 echo -e "\033[36m     URL: $webhook_url\033[0m"
+                
+                if [[ "$webhook_url" == https://* ]] && [ "$ssl_issue" = true ]; then
+                    echo -e "\033[31m  ⚠️  CRITICAL: Webhook uses HTTPS but SSL certificate is missing!\033[0m"
+                    echo -e "\033[33m     This prevents Telegram from reaching your bot.\033[0m"
+                    webhook_https=true
+                    ((errors++))
+                fi
             else
                 echo -e "\033[31m  ❌ Webhook not configured\033[0m"
                 ((errors++))
@@ -283,6 +302,121 @@ function verify_installation() {
     else
         echo -e "\n\033[1;31m❌ Installation has $errors error(s) and $warnings warning(s).\033[0m"
         echo -e "\033[31mPlease fix the errors before using the bot.\033[0m\n"
+    fi
+    
+    if [ "$webhook_https" = true ] && [ -n "$BOT_TOKEN" ] && [ -n "$domain" ]; then
+        echo -e "\033[1;33m========================================\033[0m"
+        echo -e "\033[1;33m         Auto-Fix Available\033[0m"
+        echo -e "\033[1;33m========================================\033[0m\n"
+        
+        echo -e "\033[33mYour webhook is set to HTTPS but SSL certificate is missing.\033[0m"
+        echo -e "\033[33mThis prevents your bot from receiving messages from Telegram.\033[0m"
+        echo ""
+        echo -e "\033[36mWould you like to automatically fix this by:\033[0m"
+        echo -e "  1. Changing webhook to HTTP (temporary fix)"
+        echo -e "  2. Installing SSL certificate and keeping HTTPS (recommended)"
+        echo -e "  3. Skip (fix manually later)"
+        echo ""
+        read -p "Select option [1-3]: " fix_option
+        
+        case $fix_option in
+            1)
+                echo -e "\n\033[33mChanging webhook to HTTP...\033[0m"
+                
+                # Get secret token from config
+                SECRET_TOKEN=$(grep '^\$secrettoken' "$CONFIG_PATH" | awk -F"'" '{print $2}')
+                
+                # Set webhook to HTTP
+                NEW_WEBHOOK="http://${domain}/zapzocketconfig/index.php"
+                WEBHOOK_RESPONSE=$(curl -s -F "url=${NEW_WEBHOOK}" \
+                     -F "secret_token=${SECRET_TOKEN}" \
+                     "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook")
+                
+                if echo "$WEBHOOK_RESPONSE" | grep -q '"ok":true'; then
+                    echo -e "\033[32m✅ Webhook successfully changed to HTTP!\033[0m"
+                    echo -e "\033[36m   New webhook: ${NEW_WEBHOOK}\033[0m"
+                    echo ""
+                    echo -e "\033[33mPlease test your bot now by sending /start\033[0m"
+                    echo -e "\033[33mYou can install SSL later using option 7 from the main menu.\033[0m"
+                else
+                    echo -e "\033[31m❌ Failed to change webhook!\033[0m"
+                    echo -e "\033[33m   Response: ${WEBHOOK_RESPONSE}\033[0m"
+                fi
+                ;;
+            2)
+                echo -e "\n\033[33mInstalling SSL certificate...\033[0m"
+                
+                if ! command -v certbot &>/dev/null; then
+                    echo -e "\033[33mInstalling Certbot...\033[0m"
+                    sudo apt-get install -y certbot python3-certbot-apache || {
+                        echo -e "\033[31m[ERROR] Failed to install Certbot!\033[0m"
+                        read -p "Press Enter to continue..."
+                        return 1
+                    }
+                fi
+                
+                echo -e "\033[33mStopping Apache...\033[0m"
+                sudo systemctl stop apache2
+                
+                echo -e "\033[33mObtaining SSL certificate for ${domain}...\033[0m"
+                if sudo certbot --apache --redirect --agree-tos --non-interactive --preferred-challenges http -d "$domain"; then
+                    echo -e "\033[32m✅ SSL certificate installed successfully!\033[0m"
+                    
+                    sudo systemctl start apache2
+                    
+                    # Verify SSL is working
+                    sleep 3
+                    if curl -s -o /dev/null -w "%{http_code}" --max-time 10 "https://${domain}" | grep -q "200\|301\|302"; then
+                        echo -e "\033[32m✅ SSL is working correctly!\033[0m"
+                        echo -e "\033[33mYour webhook is already set to HTTPS, so no changes needed.\033[0m"
+                        echo ""
+                        echo -e "\033[33mPlease test your bot now by sending /start\033[0m"
+                    else
+                        echo -e "\033[33m⚠️  SSL certificate installed but HTTPS connection failed.\033[0m"
+                        echo -e "\033[33mThis may be due to DNS propagation. Please wait a few minutes and try again.\033[0m"
+                    fi
+                else
+                    echo -e "\033[31m[ERROR] SSL installation failed!\033[0m"
+                    echo -e "\033[33mPossible reasons:\033[0m"
+                    echo -e "  - DNS not pointing to this server"
+                    echo -e "  - Port 80/443 not accessible"
+                    echo ""
+                    sudo systemctl start apache2
+                    echo -e "\033[33mWould you like to switch to HTTP instead? (y/n)\033[0m"
+                    read switch_http
+                    if [[ "$switch_http" == "y" || "$switch_http" == "Y" ]]; then
+                        # Recursively call option 1
+                        fix_option=1
+                        # Repeat the HTTP fix code
+                        SECRET_TOKEN=$(grep '^\$secrettoken' "$CONFIG_PATH" | awk -F"'" '{print $2}')
+                        NEW_WEBHOOK="http://${domain}/zapzocketconfig/index.php"
+                        WEBHOOK_RESPONSE=$(curl -s -F "url=${NEW_WEBHOOK}" \
+                             -F "secret_token=${SECRET_TOKEN}" \
+                             "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook")
+                        
+                        if echo "$WEBHOOK_RESPONSE" | grep -q '"ok":true'; then
+                            echo -e "\033[32m✅ Webhook successfully changed to HTTP!\033[0m"
+                            echo -e "\033[36m   New webhook: ${NEW_WEBHOOK}\033[0m"
+                        fi
+                    fi
+                fi
+                ;;
+            3)
+                echo -e "\033[33mSkipping auto-fix. You can fix this manually later.\033[0m"
+                echo ""
+                echo -e "\033[36mTo fix manually, run one of these commands:\033[0m"
+                echo ""
+                echo -e "\033[33m# Option 1: Change webhook to HTTP\033[0m"
+                echo -e "curl -X POST \"https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=http://${domain}/zapzocketconfig/index.php\""
+                echo ""
+                echo -e "\033[33m# Option 2: Install SSL (use option 7 from main menu)\033[0m"
+                ;;
+            *)
+                echo -e "\033[31mInvalid option.\033[0m"
+                ;;
+        esac
+        
+        echo ""
     fi
     
     read -p "Press Enter to continue..."
@@ -1491,33 +1625,146 @@ EOF
 }
 
 function renew_ssl() {
-    echo -e "\033[33mStarting SSL renewal process...\033[0m"
+    echo -e "\n\033[1;36m========================================\033[0m"
+    echo -e "\033[1;36m       SSL Certificate Renewal\033[0m"
+    echo -e "\033[1;36m========================================\033[0m\n"
 
     if ! command -v certbot &>/dev/null; then
-        echo -e "\033[31m[ERROR]\033[0m Certbot is not installed. Please install Certbot to proceed."
-        return 1
+        echo -e "\033[31m[ERROR]\033[0m Certbot is not installed."
+        echo -e "\033[33mInstalling Certbot...\033[0m"
+        sudo apt-get update
+        sudo apt-get install -y certbot python3-certbot-apache || {
+            echo -e "\033[31m[ERROR] Failed to install Certbot!\033[0m"
+            return 1
+        }
+        echo -e "\033[32m✅ Certbot installed successfully\033[0m"
     fi
 
-    echo -e "\033[33mStopping Apache...\033[0m"
-    sudo systemctl stop apache2 || {
-        echo -e "\033[31m[ERROR] Failed to stop Apache. Exiting...\033[0m"
-        return 1
-    }
-
-    if sudo certbot renew; then
-        echo -e "\033[32mSSL certificates successfully renewed.\033[0m"
+    # Check current SSL certificates
+    echo -e "\033[33mChecking current SSL certificates...\033[0m\n"
+    
+    if [ -d "/etc/letsencrypt/live" ]; then
+        cert_count=$(find /etc/letsencrypt/live -mindepth 1 -maxdepth 1 -type d | wc -l)
+        
+        if [ "$cert_count" -eq 0 ]; then
+            echo -e "\033[33m⚠️  No SSL certificates found to renew.\033[0m"
+            echo -e "\033[33mUse option 8 (Change Domain) to install SSL for your domain.\033[0m"
+            read -p "Press Enter to continue..."
+            return 0
+        fi
+        
+        echo -e "\033[36mFound $cert_count certificate(s):\033[0m\n"
+        
+        for cert_dir in /etc/letsencrypt/live/*/; do
+            if [ -f "${cert_dir}cert.pem" ]; then
+                domain=$(basename "$cert_dir")
+                expiry_date=$(openssl x509 -enddate -noout -in "${cert_dir}cert.pem" | cut -d= -f2)
+                current_date=$(date +%s)
+                expiry_timestamp=$(date -d "$expiry_date" +%s)
+                days_remaining=$(( ($expiry_timestamp - $current_date) / 86400 ))
+                
+                if [ $days_remaining -gt 30 ]; then
+                    echo -e "  \033[32m✅ $domain\033[0m - $days_remaining days remaining"
+                elif [ $days_remaining -gt 0 ]; then
+                    echo -e "  \033[33m⚠️  $domain\033[0m - $days_remaining days remaining (renewal recommended)"
+                else
+                    echo -e "  \033[31m❌ $domain\033[0m - EXPIRED"
+                fi
+            fi
+        done
+        echo ""
     else
-        echo -e "\033[31m[ERROR]\033[0m SSL renewal failed. Please check Certbot logs for more details."
-        sudo systemctl start apache2
-        return 1
+        echo -e "\033[33m⚠️  No SSL certificates directory found.\033[0m"
+        return 0
     fi
 
-    echo -e "\033[33mRestarting Apache...\033[0m"
-    sudo systemctl restart apache2 || {
-        echo -e "\033[31m[WARNING]\033[0m Failed to restart Apache. Please check manually."
-    }
+    read -p "Do you want to renew SSL certificates now? (y/n): " confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        echo -e "\033[33mSSL renewal cancelled.\033[0m"
+        return 0
+    fi
 
-    echo -e "\033[32mSSL renewal completed successfully.\033[0m"
+    echo -e "\n\033[33mStopping Apache...\033[0m"
+    sudo systemctl stop apache2 || {
+        echo -e "\033[31m[ERROR] Failed to stop Apache!\033[0m"
+        return 1
+    }
+    echo -e "\033[32m✅ Apache stopped\033[0m"
+
+    echo -e "\n\033[33mRenewing SSL certificates...\033[0m"
+    if sudo certbot renew --quiet; then
+        echo -e "\033[32m✅ SSL certificates renewed successfully!\033[0m"
+        renewal_success=true
+    else
+        echo -e "\033[31m[ERROR] SSL renewal failed!\033[0m"
+        echo -e "\033[33mChecking detailed status...\033[0m\n"
+        sudo certbot renew --dry-run
+        renewal_success=false
+    fi
+
+    echo -e "\n\033[33mStarting Apache...\033[0m"
+    sudo systemctl start apache2 || {
+        echo -e "\033[31m[WARNING] Failed to start Apache!\033[0m"
+        echo -e "\033[33mPlease check Apache configuration manually.\033[0m"
+    }
+    echo -e "\033[32m✅ Apache started\033[0m"
+
+    if [ "$renewal_success" = true ]; then
+        echo -e "\n\033[33mVerifying renewed certificates...\033[0m\n"
+        
+        for cert_dir in /etc/letsencrypt/live/*/; do
+            if [ -f "${cert_dir}cert.pem" ]; then
+                domain=$(basename "$cert_dir")
+                expiry_date=$(openssl x509 -enddate -noout -in "${cert_dir}cert.pem" | cut -d= -f2)
+                current_date=$(date +%s)
+                expiry_timestamp=$(date -d "$expiry_date" +%s)
+                days_remaining=$(( ($expiry_timestamp - $current_date) / 86400 ))
+                
+                echo -e "  \033[32m✅ $domain\033[0m - Valid for $days_remaining days"
+                
+                # Test HTTPS connection
+                if curl -s -o /dev/null -w "%{http_code}" --max-time 5 "https://${domain}" | grep -q "200\|301\|302"; then
+                    echo -e "     \033[32mHTTPS: Working\033[0m"
+                else
+                    echo -e "     \033[33mHTTPS: Not accessible (may be normal if domain not configured)\033[0m"
+                fi
+                echo ""
+            fi
+        done
+    fi
+
+    # Setup automatic renewal
+    echo -e "\n\033[33mSetting up automatic SSL renewal...\033[0m"
+    
+    RENEWAL_CRON="0 3 * * * certbot renew --quiet --post-hook 'systemctl reload apache2'"
+    
+    if crontab -l 2>/dev/null | grep -q "certbot renew"; then
+        echo -e "\033[32m✅ Automatic renewal already configured\033[0m"
+    else
+        (crontab -l 2>/dev/null; echo "$RENEWAL_CRON") | crontab - && {
+            echo -e "\033[32m✅ Automatic renewal configured (daily at 3 AM)\033[0m"
+        } || {
+            echo -e "\033[33m⚠️  Could not configure automatic renewal\033[0m"
+        }
+    fi
+
+    echo -e "\n\033[1;36m========================================\033[0m"
+    echo -e "\033[1;36m         Renewal Summary\033[0m"
+    echo -e "\033[1;36m========================================\033[0m\n"
+    
+    if [ "$renewal_success" = true ]; then
+        echo -e "\033[32m✅ SSL renewal completed successfully!\033[0m"
+        echo -e "\033[33mYour certificates have been renewed and will auto-renew daily.\033[0m"
+    else
+        echo -e "\033[31m❌ SSL renewal failed!\033[0m"
+        echo -e "\033[33mPlease check:\033[0m"
+        echo -e "  - Domain DNS is pointing to this server"
+        echo -e "  - Ports 80 and 443 are accessible"
+        echo -e "  - No firewall blocking connections"
+    fi
+    
+    echo ""
+    read -p "Press Enter to continue..."
 }
 
 function change_domain() {
@@ -1707,7 +1954,7 @@ function change_domain() {
     echo ""
     
     if [ "$SSL_SUCCESS" = false ]; then
-        echo -e "\033[33m⚠️  Note: SSL was not configured. You can configure it later using option 7 (Renew SSL).\033[0m"
+        echo -e "\033[33m⚠️  Note: SSL was not configured. You can configure it later using option 7 from the main menu.\033[0m"
         echo ""
     fi
     
